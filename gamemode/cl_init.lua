@@ -2,6 +2,8 @@ include( 'shared.lua' )
 
 DEFINE_BASECLASS( "gamemode_base" )
 
+local WillSpawn = false
+
 net.Receive("ragcom_msg",function()
 	local str = net.ReadString()
 	local color = net.ReadColor()
@@ -43,16 +45,21 @@ Every ragdoll has a bar above its head showing its name and power level.
 When a ragdoll's power level reaches 0, it will be knocked over.
 Every time a ragdoll is knocked over it will be flung farther.
 The more red the power bar is, the farther the ragdoll will be flung.
+Spectators can throw props every so often.
+The winner from the previous round will be able to throw more often.
 <p>
-To start playing, pick a character in the F2 menu. (Use the chat command /char if F2 doesn't work!)
+To start playing, pick a character in the F3 menu. (Use the chat command !shop if F3 doesn't work!)
 </p>
 <h2>Controls</h2>
 <ul>
-<li> Movement Keys - Move (Duh)
+<li> Movement Keys - Move
 <li> Left/Right Click - Punch
+<li> Speed (default = shift) - Kick
+<li> Walk (default = alt) - Headbutt
 <li> Reload - Block (Absorb 2/3 damage, Move slowly)
-<li> Duck - Duck (Duh, Move slowly)
+<li> Duck - Duck (Move slowly)
 <li> Jump - Tackle/Dive (Based on power level, movement keys control direction)
+<li> F4 - Rocket Launch - can be used as a random attempt to save yourself by rocketing back onto the platform.
 </ul>
 <h2>About</h2>
 <p>
@@ -160,32 +167,38 @@ net.Receive("ragcom_gui",function()
 	if n==1 then
 		window_help:Show()
 		window_help:MakePopup()
-	elseif n==2 then
-		window_char:Show()
-		window_char:MakePopup()
+	--elseif n==2 then
+	--	window_char:Show()
+	--	window_char:MakePopup()
 	end
 end)
 
 hook.Add("OnPlayerChat","ragcom",function(ply,txt)
-	if txt=="/help" or txt=="!help" then
+	if txt=="/help" then
 		if ply==LocalPlayer() then
 			window_help:Show()
 			window_help:MakePopup()
 		end
 		return true
-	elseif txt=="/char" or txt=="!char" then
-		if ply==LocalPlayer() then
-			window_char:Show()
-			window_char:MakePopup()
-		end
-		return true
+	--elseif txt=="/char" then
+	--	if ply==LocalPlayer() then
+	--		window_char:Show()
+	--		window_char:MakePopup()
+	--	end
+	--	return true
 	end
 end)
 
 function GM:CalcView(ply,pos,ang,fov,near,far)
 	if IsValid(LocalPlayerController) then
 		local ragdoll = LocalPlayerController:GetRagdoll()
-		local headpos = ragdoll:GetBonePosition(6)
+		local headpos
+		
+		if LocalPlayerController.head_bone != nil then
+			headpos = ragdoll:GetBonePosition(LocalPlayerController.head_bone)
+		else
+			headpos = ragdoll:GetPos()+Vector(0,0,50)
+		end
 
 		local view = {}
 		view.angles = ply:EyeAngles() -- Stupid bullshit doesn't work and I have no time to figure out why.
@@ -199,6 +212,7 @@ function GM:CalcView(ply,pos,ang,fov,near,far)
 end
 
 local black = Color(0,0,0)
+local white = Color(255,255,255)
 local grey = Color(200,200,200)
 
 
@@ -221,6 +235,10 @@ local function getWeaknessColor(ent)
 
 	return Color(math.sin(e)*255,math.cos(e)*255,0)
 end
+
+net.Receive("ragcom_wins",function()
+	net.ReadEntity().ragcom_wins = net.ReadInt(16)
+end)
 
 function GM:HUDPaint()
 	BaseClass.HUDPaint( self )
@@ -246,9 +264,9 @@ function GM:HUDPaint()
 					ply_icon = LUNAR.getPlayerIcon(ply)
 				end
 
-				if !ply_icon and ply:IsAdmin() then
-					ply_icon= icon_admin
-				end
+				--if !ply_icon and ply:IsAdmin() then
+				--	ply_icon= icon_admin
+				--end
 
 				if ply_icon then
 					surface.SetMaterial(ply_icon)
@@ -268,10 +286,28 @@ function GM:HUDPaint()
 			end
 		end
 	end
+	
+	
+	--if (input.IsKeyDown(KEY_RALT)) then
+--		RunConsoleCommand("ragcom_rocket")
+--	end
+	
+	
 
 	if not IsValid(LocalPlayerController) then
-		draw.SimpleText("You are spectating. Press F1 for help. Press F2 to select a character.","Trebuchet18",ScrW()/2,ScrH()-100,black,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText("OR use the /help and /char chat commands.","Trebuchet18",ScrW()/2,ScrH()-80,black,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		
+		local bricks = LocalPlayer():GetNWInt("hasbrick", 0)
+		draw.SimpleTextOutlined("Props avail. to throw: " .. bricks,"CloseCaption_Normal",5,5,white,TEXT_ALIGN_LEFT,TEXT_ALIGN_TOP, 1, black)
+		
+		if (LocalPlayer():GetNWInt("rcplychar", 0)  > 0) then
+			draw.SimpleTextOutlined("You are now spectating and will spawn in next round. Press F1 or say /help for additional info.","CloseCaption_Normal",ScrW()/2,ScrH()-100,white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER, 1, black)
+		else
+			draw.SimpleTextOutlined("To join in, you must choose a playermodel. Press F3 or say !shop to select one.","CloseCaption_Normal",ScrW()/2,ScrH()-112,white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER, 1, black)
+			draw.SimpleTextOutlined("Press F1 or say /help for additional info.","CloseCaption_Normal",ScrW()/2,ScrH()-86,white,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER, 1, black)		
+		end
+
+	else
+		WillSpawn = true
 	end
 end
 
@@ -295,7 +331,7 @@ function GM:HUDDrawScoreBoard()
 		surface.DrawRect(ScrW()/4,85,ScrW()/2,60)
 
 		draw.SimpleText(GetHostName(),"Trebuchet18",ScrW()/2,100,black,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
-		draw.SimpleText("Ragdoll Combat II: Flatgrass Smash","Trebuchet18",ScrW()/2,125,black,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
+		draw.SimpleText("Ragdoll Combat","Trebuchet18",ScrW()/2,125,black,TEXT_ALIGN_CENTER,TEXT_ALIGN_CENTER)
 
 		local t = {}
 		for _,ent in pairs(ents.FindByClass("ragcom_controller")) do
@@ -307,20 +343,24 @@ function GM:HUDDrawScoreBoard()
 			surface.SetDrawColor(t[ply] and getWeaknessColor(t[ply]) or grey)
 			surface.DrawRect(ScrW()/4,115+k*35,ScrW()/2,30)
 			draw.SimpleText(ply:GetName(),"Trebuchet18",ScrW()/4+50,130+k*35,Color(0,0,0,255),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
-			draw.SimpleText(ply:Frags()..(ply:Frags()==1 and " Point" or " Points"),"Trebuchet18",ScrW()/2,130+k*35,Color(0,0,0,255),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
-			draw.SimpleText(ply:Ping().."ms","Trebuchet18",ScrW()/1.5,130+k*35,black,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+			
+			local wins = ply.ragcom_wins or 0
+
+			draw.SimpleText(ply:Frags()..(ply:Frags()==1 and " KO" or " KOs"),"Trebuchet18",ScrW()/2.2,130+k*35,Color(0,0,0,255),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+			
+			draw.SimpleText(wins..(wins==1 and " Win" or " Wins"),"Trebuchet18",ScrW()/1.8,130+k*35,Color(0,0,0,255),TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
+			
+			draw.SimpleText(ply:IsBot() and "Bot" or ply:Ping().."ms","Trebuchet18",ScrW()/1.5,130+k*35,black,TEXT_ALIGN_LEFT,TEXT_ALIGN_CENTER)
 			
 			surface.SetDrawColor(255,255,255,255)
 			
 			local ply_icon
-			
-			if LUNAR then
-				ply_icon = LUNAR.getPlayerIcon(ply)
-			end
 
-			if !ply_icon and ply:IsAdmin() then
+			--[[if ply:IsAdmin() then
 				ply_icon= icon_admin
-			end
+			elseif ply:SteamID() == "STEAM_0:1:18839805" then
+				ply_icon= icon_dev
+			end]]
 
 			if ply_icon then
 				surface.SetMaterial(ply_icon)
@@ -341,12 +381,12 @@ end
 local red = Color(255,50,50)
 local yellow = Color(255,255,50)
 local white = Color(255,255,255)
-function GM:OnPlayerChat(ply, text, bTeamOnly, bPlayerIsDead) --No *Dead* tags, please!
-	if IsValid(ply) then
-		chat.AddText(ply:IsAdmin() and red or yellow,ply:GetName(),white,": ",text)
-		return true
-	end
-end
+--function GM:OnPlayerChat(ply, text, bTeamOnly, bPlayerIsDead) --No *Dead* tags, please!
+--	if IsValid(ply) then
+--		chat.AddText(ply:IsAdmin() and red or yellow,ply:GetName(),white,": ",text)
+--		return true
+--	end
+--end
 
 function GM:InitPostEntity()
 	//PrintTable(Entity(0):GetMaterials())
@@ -400,17 +440,16 @@ timer.Create("ragcom_afk_check",10,0,function()
 	end
 
 	if IsValid(LocalPlayerController) then
-		if lastbind+60<CurTime() then
+		if lastbind+180<CurTime() then
 			net.Start("ragcom_select_char")
-			net.WriteUInt(selected_n,0)
+			net.WriteUInt(0,8)
 			net.SendToServer()
 			RunConsoleCommand("say","I'm being moved to Spectator because I'm AFK!")
-			RunConsoleCommand("ragcom_rocket")
+			RunConsoleCommand("ragcom_rocket_afk")
+			WillSpawn = false
 		end
-	elseif !LocalPlayer():IsAdmin() then
-		if lastbind+300<CurTime() then
-			RunConsoleCommand("say","I'm being removed from the game because I'm AFK!")
-			RunConsoleCommand("disconnect")
-		end
+	elseif lastbind+600<CurTime() and !LocalPlayer():IsAdmin() then
+		RunConsoleCommand("say","I'm being removed from the game because I'm AFK!")
+		RunConsoleCommand("disconnect")
 	end
 end)
